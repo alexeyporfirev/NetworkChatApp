@@ -45,13 +45,13 @@ public class Server {
             selector = Selector.open();
             serverChannel.register(selector, SelectionKey.OP_ACCEPT);
 
-           logFile = new BufferedWriter(new FileWriter(LOG_FILE));
+            logFile = new BufferedWriter(new FileWriter(LOG_FILE));
 
             log("INFO", "Сервер запущен...");
         } catch (IOException e) {
             log("ERROR", "Ошибка запуска сервера");
         } catch (URISyntaxException e) {
-            log("ERROR","Неверно указано имя конфигурационного файла при запуске сервера");
+            log("ERROR", "Неверно указано имя конфигурационного файла при запуске сервера");
         }
         userSockets = new HashMap<>();
     }
@@ -84,7 +84,6 @@ public class Server {
     }
 
     private void sendMessageToUser(SelectionKey event) {
-        System.out.println("sendMessageToUser:: Start");
         SocketChannel socketChannel = (SocketChannel) event.channel();
         ByteBuffer buffer = userSockets.get(socketChannel);
         buffer.flip();
@@ -103,11 +102,9 @@ public class Server {
                 log("ERROR", "Операция чтения/записи не возможна, так как канал уже закрыт");
             }
         }
-        System.out.println("sendMessageToUser:: Done");
     }
 
     private void receiveNewMessageFromUser(SelectionKey event) throws IOException {
-        System.out.println("receiveNewMessageFromUser:: Start");
         SocketChannel socketChannel = null;
         try {
             socketChannel = (SocketChannel) event.channel();
@@ -125,8 +122,6 @@ public class Server {
             String userMessage = new String(buffer.array(), buffer.position(), buffer.limit(), StandardCharsets.UTF_8.name());
             log("MESSAGE", userMessage);
             broadcast(userMessage);
-
-            System.out.println("receiveNewMessageFromUser:: Done");
         } catch (IOException e) {
             log("ERROR", "Ошибка чтения сообщения от пользователя");
             userSockets.remove(socketChannel);
@@ -167,7 +162,6 @@ public class Server {
         } catch (IOException e) {
             log("ERROR", "Ошибка чтения конфигурационного файла \"" + fileName + "\"");
         }
-
     }
 
     private void log(String mode, String msg) {
