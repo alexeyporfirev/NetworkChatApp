@@ -1,6 +1,5 @@
 package ru.porfirevalexey.networkchat.server;
 
-import org.w3c.dom.Text;
 import ru.porfirevalexey.networkchat.message.Message;
 import ru.porfirevalexey.networkchat.message.MessageManager;
 import ru.porfirevalexey.networkchat.message.MessageMode;
@@ -11,9 +10,7 @@ import java.net.InetSocketAddress;
 import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
 import java.nio.channels.*;
-import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -32,6 +29,7 @@ public class Server {
 
     private HashMap<SocketChannel, ByteBuffer> userSockets;
     private HashMap<SocketChannel, String> userNames;
+    private HashMap<SocketChannel, Boolean> userCapable;
 
     private Server() {
         start();
@@ -61,11 +59,10 @@ public class Server {
             log("INFO", "Сервер запущен...", true);
         } catch (IOException e) {
             log("ERROR", "Ошибка запуска сервера", true);
-        } catch (URISyntaxException e) {
-            log("ERROR", "Неверно указано имя конфигурационного файла при запуске сервера", true);
         }
         userSockets = new HashMap<>();
         userNames = new HashMap<>();
+        userCapable = new HashMap<>();
     }
 
 
@@ -120,7 +117,7 @@ public class Server {
             int bytesCount = socketChannel.read(buffer);
             if (bytesCount == -1) {
                 log("INFO", "Подключение с адресом " + socketChannel.getRemoteAddress() + " разорвано", true);
-                dicsonnectUser(socketChannel);
+                disconnectUser(socketChannel);
                 return;
             }
 
@@ -135,20 +132,20 @@ public class Server {
                 proceedServiceMessage(socketChannel, message);
             } else {
                 log("MESSAGE", message.toString(), true);
-                if (bytesCount > 0) {
+                if (bytesCount > 0 && userCapable.get(socketChannel).equals(Boolean.TRUE)) {
                     broadcast(buffer.array());
-//                    socketChannel.register(selector, SelectionKey.OP_WRITE);
                 }
             }
         } catch (IOException e) {
             log("ERROR", "Ошибка чтения сообщения от пользователя: " + e.getMessage(), true);
-            dicsonnectUser(socketChannel);
+            disconnectUser(socketChannel);
         } catch (ClassNotFoundException e) {
             log("ERROR", "Ошибка обработки сообщения от пользователя" + e.getMessage(), true);
         }
     }
 
-    private void dicsonnectUser(SocketChannel socketChannel) throws IOException {
+    private void disconnectUser(SocketChannel socketChannel) throws IOException {
+        log("INFO", "Пользователь " + userNames.get(socketChannel) + " покинул чат", true);
         userSockets.remove(socketChannel);
         userNames.remove(socketChannel);
         socketChannel.close();
@@ -184,15 +181,18 @@ public class Server {
         }
     }
 
-    private void readConfigurationFile(String fileName) throws URISyntaxException {
-        File configFile = new File(getClass().getResource("/" + fileName).toURI());
-        try (BufferedReader br = new BufferedReader(new FileReader(configFile))) {
+    private void readConfigurationFile(String fileName) {
+        try (BufferedReader br = new BufferedReader(
+                new FileReader(
+                        new File(getClass().getResource("/" + fileName).toURI())
+                )
+        )) {
             host = br.readLine().strip().split("=")[1];
             port = Integer.parseInt(br.readLine().strip().split("=")[1]);
             bufferSize = Integer.parseInt(br.readLine().strip().split("=")[1]);
         } catch (FileNotFoundException e) {
             log("ERROR", "Конфигурационный файл сервера\"" + fileName + "\" не найден", true);
-        } catch (IOException e) {
+        } catch (IOException | URISyntaxException e) {
             log("ERROR", "Ошибка чтения конфигурационного файла \"" + fileName + "\"", true);
         }
     }
@@ -224,14 +224,16 @@ public class Server {
     private void proceedServiceMessage(SocketChannel socketChannel, Message message) throws IOException {
         String[] messageParts = (new String(message.getContent())).split("\\s");
         switch (messageParts[0]) {
-            case "\\exit":
+            case "/exit":
                 final ByteBuffer buffer = userSockets.get(socketChannel);
                 broadcastExceptOneUser(buffer.array(), socketChannel);
-                dicsonnectUser(socketChannel);
+                disconnectUser(socketChannel);
                 break;
-            case "\\newUser":
+            case "/newUser":
                 if (!isUserNameCorrect(message.getUsername())) {
+                    log("INFO", "Пользователь " + message.getUsername() + " присоединился к чату", true);
                     this.userNames.put(socketChannel, message.getUsername());
+                    this.userCapable.put(socketChannel, Boolean.TRUE);
                     this.userSockets.get(socketChannel).flip();
                     broadcastExceptOneUser(this.userSockets.get(socketChannel).array(), socketChannel);
                     Message msg = new TextMessage(
@@ -239,19 +241,21 @@ public class Server {
                             userNames
                                     .values()
                                     .stream()
-                                    .reduce("\\userList ", (a, b) -> a + ":" + b).getBytes(),
+                                    .reduce("/userList ", (a, b) -> a + ":" + b).getBytes(),
                             MessageMode.SERVICE);
                     MessageManager.packMessageToByteArray(msg);
                     userSockets.get(socketChannel).clear();
                     userSockets.get(socketChannel).put(ByteBuffer.wrap(MessageManager.packMessageToByteArray(msg)));
                     socketChannel.register(selector, SelectionKey.OP_WRITE);
                 } else {
+                    this.userCapable.put(socketChannel, Boolean.FALSE);
+                    log("INFO", "Пользователь " + message.getUsername() + " не смог присоединиться к чату", true);
                     Message msg = new TextMessage(
                             message.getUsername(),
                             userNames
                                     .values()
                                     .stream()
-                                    .reduce("\\errorUserName ", (subtotal, element) -> subtotal + ":" + element).getBytes(),
+                                    .reduce("/errorInitialUserName ", (subtotal, element) -> subtotal + ":" + element).getBytes(),
                             MessageMode.SERVICE);
                     final ByteBuffer bufferClient = userSockets.get(socketChannel);
                     bufferClient.clear();
@@ -259,17 +263,18 @@ public class Server {
                     socketChannel.register(selector, SelectionKey.OP_WRITE);
                 }
                 break;
-            case "\\changeName":
+            case "/changeName":
                 if (!isUserNameCorrect(messageParts[1])) {
+                    this.userCapable.put(socketChannel, Boolean.TRUE);
+                    log("INFO", "Пользователь " + message.getUsername() + " сменил ник на " + messageParts[1], true);
                     this.userNames.put(socketChannel, messageParts[1]);
                     broadcast(userSockets.get(socketChannel).array());
                 } else {
+                    this.userCapable.put(socketChannel, Boolean.FALSE);
+                    log("INFO", "Пользователь " + message.getUsername() + " не смог сменить ник на " + messageParts[1], true);
                     Message msg = new TextMessage(
                             message.getUsername(),
-                            userNames
-                                    .values()
-                                    .stream()
-                                    .reduce("\\errorUserName ", (subtotal, element) -> subtotal + ":" + element).getBytes(),
+                            ("/errorUserName " + messageParts[1]).getBytes(),
                             MessageMode.SERVICE);
                     final ByteBuffer bufferClient = userSockets.get(socketChannel);
                     bufferClient.clear();

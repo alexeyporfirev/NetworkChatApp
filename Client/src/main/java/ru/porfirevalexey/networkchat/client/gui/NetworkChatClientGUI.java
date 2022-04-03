@@ -11,9 +11,11 @@ import javax.swing.*;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
-import java.sql.Time;
+import java.sql.Timestamp;
 import java.util.*;
 
 
@@ -24,6 +26,7 @@ public class NetworkChatClientGUI extends JFrame implements ActionListener, Conn
     private JTextArea chatArea;
     private JLabel userName;
     private JPanel mainPanel;
+    private JScrollPane scrollPanel;
 
     private static Connection conn;
     private SortedSet<String> users;
@@ -32,7 +35,6 @@ public class NetworkChatClientGUI extends JFrame implements ActionListener, Conn
 
     public NetworkChatClientGUI(String title) throws IOException {
         super(title);
-        users = new TreeSet<String>();
         conn = new Connection(this);
         conn.connectToServer();
 
@@ -41,6 +43,19 @@ public class NetworkChatClientGUI extends JFrame implements ActionListener, Conn
         createUIComponents();
         this.pack();
         this.setVisible(true);
+        this.addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                try {
+                    if (conn.isConnected()) {
+                        conn.disconnectFromServer();
+                    }
+                } catch (IOException ex) {
+                    ex.printStackTrace();
+                }
+            }
+        });
+
         threadReceiver = new Thread(null, conn::receiveMessageFromServer, "receiveMessages");
         threadReceiver.start();
     }
@@ -58,76 +73,76 @@ public class NetworkChatClientGUI extends JFrame implements ActionListener, Conn
 
     public static void main(String[] args) throws IOException, InterruptedException, InvocationTargetException {
         new NetworkChatClientGUI("Client App");
-    }
 
-    private boolean isItCorrectedUserName(String newUserName) {
-        return !users.contains(newUserName);
     }
 
     @Override
     public void actionPerformed(ActionEvent e) {
         String message = this.userMessagetextField.getText();
         if ("".equals(message)) return;
-        this.userMessagetextField.setText(null);
         Message msg = new TextMessage(conn.getUserName(), message);
         conn.sendMessageToServer(msg);
+        this.userMessagetextField.setText(null);
     }
 
     @Override
     public void newMessageReceived(Message msg) {
-        if (msg.getMessageMode() == MessageMode.STANDARD) {
-            if (msg.getMessageType() == MessageType.TEXT) {
-                this.chatArea.append(new String("[" + new Time(System.currentTimeMillis()) + "] " + msg.getUsername() + ": " + new String(msg.getContent())) + "\n");
-            }
-        } else {
-            System.out.println("!!!!!!!!" + new String(msg.getContent()));
-            switch ((new String(msg.getContent())).split("\\s+")[0]) {
-                case "\\exit":
-                    System.out.println("EXIT");
-                    users.remove(msg.getUsername());
-                    usersList.setListData(users.toArray());
-                    break;
-                case "\\changeName":
-                    System.out.println("CHANGE_NAME");
-                    System.out.println(users);
-                    System.out.println(msg.getUsername());
-                    users.remove(msg.getUsername());
-                    users.add((new String(msg.getContent())).split("\\s+")[1]);
-                    usersList.setListData(users.toArray());
-                    break;
-                case "\\newUser":
-                    System.out.println("NEW_USER");
-                    users.add(msg.getUsername());
-                    System.out.println(users);
-                    usersList.setListData(users.toArray());
-                    break;
-                case "\\errorUserName":
-                    chatArea.append("Такое имя пользователя уже существует!");
-                case "\\userList":
-                    System.out.println("USER_LIST");
-                    String[] usersFromServer = (new String(msg.getContent())).split("\\s+")[1].split(":");
-                    System.out.println(msg.getUsername());
-                    users.addAll(Arrays.asList(usersFromServer));
-                    usersList.setListData(usersFromServer);
-                    break;
-            }
+        if (msg.getMessageType() == MessageType.TEXT) {
+            this.chatArea.append(generateMessageForChat(msg.toString()));
+            this.chatArea.setCaretPosition(this.chatArea.getDocument().getLength());
         }
-
     }
 
     @Override
     public void newConnectionEstablished() {
         this.chatArea.append("Соединение с сервером установлено..." + "\n");
+        this.chatArea.setCaretPosition(this.chatArea.getDocument().getLength());
+        this.chatArea.setCaretPosition(this.chatArea.getDocument().getLength());
+
     }
 
     @Override
     public void disconnected() {
-        try {
-            conn.disconnectFromServer();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
         this.chatArea.append("Соединение с сервером разорвано..." + "\n");
+        this.chatArea.setCaretPosition(this.chatArea.getDocument().getLength());
         threadReceiver.interrupt();
+    }
+
+    @Override
+    public void newUserAdded(String userName) {
+        chatArea.append(generateMessageForChat(userName + " присоединился к чату"));
+        this.chatArea.setCaretPosition(this.chatArea.getDocument().getLength());
+        usersList.setListData(conn.getUsers().toArray());
+    }
+
+    @Override
+    public void userWasRemoved(String userName) {
+        chatArea.append(generateMessageForChat(userName + " покинул чат"));
+        this.chatArea.setCaretPosition(this.chatArea.getDocument().getLength());
+        usersList.setListData(conn.getUsers().toArray());
+    }
+
+    @Override
+    public void userNameWasChanged(String oldUserName, String newUserName) {
+        chatArea.append(generateMessageForChat(oldUserName + " сменил ник на " + newUserName));
+        this.chatArea.setCaretPosition(this.chatArea.getDocument().getLength());
+        usersList.setListData(conn.getUsers().toArray());
+        if(this.userName.getText().equals(oldUserName)) {
+            this.userName.setText(conn.getUserName());
+        }
+    }
+
+    @Override
+    public void userNameWasNotChanged(String oldUserName, String newUserName) {
+        chatArea.append(generateMessageForChat(newUserName + " - такой ник уже существует! Выберите другой ник"));
+    }
+
+    @Override
+    public void userListReceived(Set<String> users) {
+        usersList.setListData(conn.getUsers().toArray());
+    }
+
+    private String generateMessageForChat(String message) {
+        return "[" + new Timestamp(System.currentTimeMillis()) + "]" + message + "\n";
     }
 }

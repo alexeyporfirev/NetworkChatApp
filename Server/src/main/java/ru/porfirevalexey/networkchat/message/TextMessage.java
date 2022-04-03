@@ -18,11 +18,8 @@ public class TextMessage implements Message, Serializable {
 
     public TextMessage(String username, String message) {
         this.username = username;
-        if ((this.messageMode = defineMessageMode(message)) == MessageMode.SERVICE) {
-            content = message.substring(1).getBytes();
-        } else {
-            content = message.getBytes();
-        }
+        this.messageMode = defineMessageMode(message);
+        content = message.getBytes();
         this.messageType = MessageType.TEXT;
     }
 
@@ -47,7 +44,7 @@ public class TextMessage implements Message, Serializable {
     }
 
     private MessageMode defineMessageMode(String message) {
-        return message.startsWith("\\")?MessageMode.SERVICE:MessageMode.STANDARD;
+        return message.startsWith("/") ? MessageMode.SERVICE : MessageMode.STANDARD;
     }
 
     @Override

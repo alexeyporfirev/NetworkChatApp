@@ -1,8 +1,6 @@
 package ru.porfirevalexey.networkchat.connection;
 
-import ru.porfirevalexey.networkchat.message.Message;
-import ru.porfirevalexey.networkchat.message.MessageMode;
-import ru.porfirevalexey.networkchat.message.TextMessage;
+import ru.porfirevalexey.networkchat.message.*;
 
 import java.io.*;
 import java.net.InetSocketAddress;
@@ -10,14 +8,14 @@ import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
+import java.sql.Time;
 import java.sql.Timestamp;
-import java.util.Random;
-import java.util.Scanner;
+import java.util.*;
 
 public class Connection {
 
     private final String CONFIG_FILE = "client.cfg";
-    private final String LOG_FILE = "client.cfg";
+    private final String LOG_FILE = "logs.txt";
 
     private SocketChannel socketChannel;
     private ConnectionListener connectionListener;
@@ -25,11 +23,21 @@ public class Connection {
     private int hostPort;
     private int bufferSize;
     private String userName;
+    private SortedSet<String> users;
+    private boolean isConnected;
+    private boolean isCorrectUsername;
 
     private static BufferedWriter logFile;
 
-    public Connection(ConnectionListener connectionListener) {
+    public Connection(ConnectionListener connectionListener) throws IOException {
         this.connectionListener = connectionListener;
+        logFile = new BufferedWriter(
+                new FileWriter(getClass()
+                        .getResource("/").getPath() + LOG_FILE
+                )
+        );
+        users = new TreeSet<>();
+        isCorrectUsername = true;
     }
 
     public void receiveMessageFromServer() {
@@ -37,67 +45,113 @@ public class Connection {
         int bytesCount = 0;
         while (true) {
             if (Thread.currentThread().isInterrupted()) {
-                System.out.println("Interrrerererer");
                 try {
-                    socketChannel.close();
-                    System.out.println("11111111");
+                    if (socketChannel.isOpen()) {
+                        socketChannel.close();
+                        log("INFO", "Соединение с сервером было разорвано, т.к. пользователь закончил сеанс", true);
+                        isConnected = false;
+                    }
                 } catch (IOException e) {
-                    e.printStackTrace();
+                    log("ERROR", "Ошибка при попытке разорвать соединение с сервером", true);
+                    isConnected = false;
                 }
                 break;
             }
             try {
                 bytesCount = socketChannel.read(buffer);
+                if (bytesCount == -1) {
+                    log("INFO", "Сервер завершил сеанс связи", true);
+                    this.users.clear();
+                    socketChannel.close();
+                    break;
+                }
                 buffer.flip();
-                String msg = new String(buffer.array(), buffer.position(), bytesCount, StandardCharsets.UTF_8).trim();
-                ByteArrayInputStream byteIs = new ByteArrayInputStream(buffer.array());
-                ObjectInputStream objectIs = new ObjectInputStream(byteIs);
-                Message message = (Message) objectIs.readObject();
-                System.out.println("Result: " + new String(message.getContent()));
+                Message message = MessageManager.unpackMessageFromByteArray(buffer.array());
+                log("MESSAGE", message.toString(), true);
                 buffer.clear();
-                connectionListener.newMessageReceived(message);
+
+                if (message.getMessageMode() == MessageMode.STANDARD) {
+                    if (message.getMessageType() == MessageType.TEXT) {
+                        connectionListener.newMessageReceived(message);
+                    }
+                } else {
+                    String[] contentData = (new String(message.getContent())).split("\\s+");
+                    switch (contentData[0]) {
+                        case "/exit":
+                            log("INFO", "Пользователь покинул " + message.getUsername() + " чат", true);
+                            users.remove(message.getUsername());
+                            connectionListener.userWasRemoved(message.getUsername());
+                            isConnected = false;
+                            break;
+                        case "/changeName":
+                            log("INFO", "Пользователь изменил ник " + message.getUsername() + "->" + contentData[1], true);
+                            if (message.getUsername().equals(this.userName) && !isCorrectUsername) {
+                                setUserName(contentData[1]);
+                                isCorrectUsername = true;
+                            }
+                            users.add(contentData[1]);
+                            connectionListener.userNameWasChanged(message.getUsername(), contentData[1]);
+                            break;
+                        case "/newUser":
+                            log("INFO", "Новый пользователь " + message.getUsername() + " зашел в чат", true);
+                            users.add(message.getUsername());
+                            connectionListener.newUserAdded(message.getUsername());
+                            break;
+                        case "/errorInitialUserName":
+                            log("INFO", "Пользователь с ником " + contentData[1] + "уже есть", true);
+                            setUserName(message.getUsername());
+                            connectionListener.userNameWasNotChanged(message.getUsername(), contentData[1]);
+                            isCorrectUsername = false;
+                        case "/userList":
+                            log("INFO", "Получен текущий список участников чата", true);
+                            String[] usersFromServer = (new String(message.getContent())).split("\\s+")[1].split(":");
+                            users.addAll(Arrays.asList(usersFromServer));
+                            connectionListener.userListReceived(users);
+                            break;
+                        case "/errorUserName":
+                            log("INFO", "Не удалось сменить ник пользователя. Пользователь с ником " + contentData[1] + "уже есть", true);
+                            setUserName(message.getUsername());
+                            connectionListener.userNameWasNotChanged(message.getUsername(), contentData[1]);
+                            isCorrectUsername = false;
+                            break;
+                    }
+                }
             } catch (IOException e) {
-                e.printStackTrace();
+                log("ERROR", "Ошибка при чтении сообщения от сервера", true);
             } catch (ClassNotFoundException e) {
-                e.printStackTrace();
+                log("ERROR", "Ошибка при обработке сообщения от сервера", true);
             }
         }
     }
 
     public void sendMessageToServer(Message message) {
         try {
-            ByteArrayOutputStream byteOs = new ByteArrayOutputStream();
-            ObjectOutputStream objectOs = new ObjectOutputStream(byteOs);
-            objectOs.writeObject(message);
-            objectOs.flush();
-
+            MessageManager.packMessageToByteArray(message);
             final ByteBuffer buffer = ByteBuffer.allocate(bufferSize);
-            buffer.put(byteOs.toByteArray());
-
-            byteOs.close();
-            objectOs.close();
-
+            buffer.put(MessageManager.packMessageToByteArray(message));
             buffer.flip();
             socketChannel.write(buffer);
+            log("INFO", message.toString(), true);
 
             if (message.getMessageMode() == MessageMode.SERVICE) {
                 String[] contentParts = (new String(message.getContent())).split("\\s+");
                 switch (contentParts[0]) {
-                    case "\\exit":
-                        System.out.println("Disconnect from server");
+                    case "/exit":
+                        log("INFO", "Соединение с сервером разорвано, т.к. пользователь закончил сеанс", true);
+                        this.users.clear();
+                        connectionListener.userWasRemoved(this.userName);
                         connectionListener.disconnected();
-                        Thread.sleep(1000);
                         socketChannel.close();
+                        isConnected = false;
                         break;
-                    case "\\changeName":
-                        System.out.println();
+                    case "/changeName":
+                        log("INFO", "Попытка изменения логина пользователя: " + this.userName + "->" + contentParts[1], true);
+                        connectionListener.userNameWasChanged(this.userName, contentParts[1]);
                         setUserName(contentParts[1]);
                         break;
                 }
             }
         } catch (IOException e) {
-            e.printStackTrace();
-        } catch (InterruptedException e) {
             e.printStackTrace();
         }
     }
@@ -108,38 +162,34 @@ public class Connection {
         socketChannel = SocketChannel.open();
         socketChannel.connect(socketAddress);
         connectionListener.newConnectionEstablished();
-        Message message = new TextMessage(userName, ("\\newUser").getBytes(), MessageMode.SERVICE);
+        log("INFO", "Соединение с сервером установлено", true);
+        Message message = new TextMessage(userName, ("/newUser").getBytes(), MessageMode.SERVICE);
         sendMessageToServer(message);
+        isConnected = true;
     }
 
     public void disconnectFromServer() throws IOException {
-        Message message = new TextMessage(userName, "\\exit".getBytes(), MessageMode.SERVICE);
+        Message message = new TextMessage(userName, "/exit".getBytes(), MessageMode.SERVICE);
         sendMessageToServer(message);
-        System.out.println("Exit отправлен");
         socketChannel.close();
         connectionListener.disconnected();
+        log("INFO", "Соединение с сервером разорвано", true);
+        this.users.clear();
+        isConnected = false;
     }
 
-    private void readConfigurationFile(String fileName) throws IOException {
-        try (BufferedReader bf = new BufferedReader(
-                new FileReader(
-                        new File(
-                                getClass()
-                                        .getResource("/" + fileName)
-                                        .toURI()
-                        )
-                )
+    private void readConfigurationFile(String fileName) {
+        try (BufferedReader br = new BufferedReader(
+                new FileReader(getClass().getResource("/" + CONFIG_FILE).getPath())
         )) {
-            while (bf.ready()) {
-                hostName = bf.readLine().strip().split("=")[1];
-                hostPort = Integer.parseInt(bf.readLine().strip().split("=")[1]);
-                bufferSize = Integer.parseInt(bf.readLine().strip().split("=")[1]);
-                userName = bf.readLine().strip().split("=")[1] + (new Random()).nextInt(10);
-            }
-        } catch (URISyntaxException | FileNotFoundException e) {
-            log("ERROR", "Конфигурационный файл не найден");
+            hostName = br.readLine().strip().split("=")[1];
+            hostPort = Integer.parseInt(br.readLine().strip().split("=")[1]);
+            bufferSize = Integer.parseInt(br.readLine().strip().split("=")[1]);
+            userName = br.readLine().strip().split("=")[1] + (new Random()).nextInt(10);
+        } catch (FileNotFoundException e) {
+            log("ERROR", "Конфигурационный файл сервера\"" + fileName + "\" не найден", true);
         } catch (IOException e) {
-            log("ERROR", "Ошибка чтения конфигурационного файла");
+            log("ERROR", "Ошибка чтения конфигурационного файла \"" + fileName + "\"", true);
         }
     }
 
@@ -156,6 +206,7 @@ public class Connection {
         if (writeToFile) {
             try {
                 logFile.write(logMessage);
+                logFile.flush();
             } catch (IOException e) {
                 log("ERROR", "Ошибка записи в файл логов");
             }
@@ -168,5 +219,13 @@ public class Connection {
 
     public void setUserName(String userName) {
         this.userName = userName;
+    }
+
+    public SortedSet<String> getUsers() {
+        return users;
+    }
+
+    public boolean isConnected() {
+        return isConnected;
     }
 }
