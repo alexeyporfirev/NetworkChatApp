@@ -27,26 +27,26 @@ public class Server {
     private int bufferSize;
     private BufferedWriter logFile;
 
-    private ServerSocketChannel serverChannel;
-    private Selector selector;
+    protected ServerSocketChannel serverChannel;
+    protected Selector selector;
 
     /**
      * Мэп, содержащий каналы сокетов и байтовые буферы подключенных пользователей
      */
-    private HashMap<SocketChannel, ByteBuffer> userSockets;
+    protected HashMap<SocketChannel, ByteBuffer> userSockets;
     /**
      * Мэп, содержащий каналы сокетов и имена подключенных пользователей
      */
-    private HashMap<SocketChannel, String> userNames;
+    protected HashMap<SocketChannel, String> userNames;
     /**
      * Мэп, содержащий каналы сокетов и данные о возможности подключенных пользователей отправлять несервисные сообщения
      */
-    private HashMap<SocketChannel, Boolean> userCapable;
+    protected HashMap<SocketChannel, Boolean> userCapable;
 
     /**
      * Создание и запуск нового сервера межсетевого чата
      */
-    private Server() {
+    public Server() {
         start();
     }
 
@@ -73,7 +73,7 @@ public class Server {
             // открываем файл логов в папке с ресурсами
             logFile = new BufferedWriter(
                     new FileWriter(getClass()
-                            .getResource("/" ).getPath() + LOG_FILE
+                            .getResource("/" ).getPath() + LOG_FILE, true
                     )
             );
             log("INFO", "Сервер запущен...", true);
@@ -198,7 +198,7 @@ public class Server {
      * @param socketChannel Канал сокета отключамого пользователя
      * @throws IOException В случае ошибки при закрытии канала сокета
      */
-    private void disconnectUser(SocketChannel socketChannel) throws IOException {
+    protected void disconnectUser(SocketChannel socketChannel) throws IOException {
         log("INFO", "Пользователь " + userNames.get(socketChannel) + " покинул чат", true);
         userSockets.remove(socketChannel);
         userNames.remove(socketChannel);
@@ -211,7 +211,7 @@ public class Server {
      * @param message Байтовое представление рассылаемого сообщения
      * @throws ClosedChannelException В случае, если какой-то из каналов сокетов был закрыт при работе метода
      */
-    private void broadcast(byte[] message) throws ClosedChannelException {
+    protected void broadcast(byte[] message) throws ClosedChannelException {
         for (Map.Entry<SocketChannel, ByteBuffer> entry : userSockets.entrySet()) {
             if(entry.getKey().isConnected()) {
                 //очищаем буфер и записываем туда новые данные
@@ -229,7 +229,7 @@ public class Server {
      * @param message Передаваемое сообщение
      * @throws ClosedChannelException В случае, если канал сокета был закрыт при работе метода
      */
-    private void sendMessageToOneUser(SocketChannel socketChannel, byte[] message) throws ClosedChannelException {
+    protected void sendMessageToOneUser(SocketChannel socketChannel, byte[] message) throws ClosedChannelException {
         userSockets.get(socketChannel).clear();
         userSockets.get(socketChannel).put(ByteBuffer.wrap(message));
         socketChannel.register(selector, SelectionKey.OP_WRITE);
@@ -241,7 +241,7 @@ public class Server {
      * @param socketChannel Канал сокета пользователя, которому не надо рассылать сообщение
      * @throws ClosedChannelException
      */
-    private void broadcastExceptOneUser(byte[] message, SocketChannel socketChannel) throws ClosedChannelException {
+    protected void broadcastExceptOneUser(byte[] message, SocketChannel socketChannel) throws ClosedChannelException {
         for (Map.Entry<SocketChannel, ByteBuffer> entry : userSockets.entrySet()) {
             if (!entry.getKey().equals(socketChannel)) {
                 entry.getValue().clear();
@@ -254,7 +254,7 @@ public class Server {
     /**
      * Обработка нового подключения пользователя на сервер
      */
-    private void acceptNewConnection() {
+    protected void acceptNewConnection() {
         try {
             SocketChannel socketChannel = serverChannel.accept();
             //явно указываем неблокирующий режим работы
@@ -265,58 +265,6 @@ public class Server {
             socketChannel.register(selector, SelectionKey.OP_READ);
         } catch (IOException e) {
             log("ERROR", "Ошибка установки нового подключения", true);
-        }
-    }
-
-    /**
-     * Чтение конфигурационного файла
-     * @param fileName Имя конфигурационного файла
-     */
-    private void readConfigurationFile(String fileName) {
-        try (BufferedReader br = new BufferedReader(
-                new FileReader(
-                        new File(getClass().getResource("/" + fileName).toURI())
-                )
-        )) {
-            host = br.readLine().strip().split("=")[1];
-            port = Integer.parseInt(br.readLine().strip().split("=")[1]);
-            bufferSize = Integer.parseInt(br.readLine().strip().split("=")[1]);
-        } catch (FileNotFoundException e) {
-            log("ERROR", "Конфигурационный файл сервера\"" + fileName + "\" не найден", true);
-        } catch (IOException | URISyntaxException e) {
-            log("ERROR", "Ошибка чтения конфигурационного файла \"" + fileName + "\"", true);
-        }
-    }
-
-    /**
-     * Запись лога в консоль
-     * @param mode Вид логируемого сообщения
-     * @param msg Логируемое собощение
-     */
-    private void log(String mode, String msg) {
-        log(mode, msg, false);
-    }
-
-    /**
-     * Запись лога в консоль с возможность дополнительной записи в файл логов
-     * @param mode Вид логируемого сообщения
-     * @param msg Логируемое собощение
-     * @param writeToFile Надо ли записывать логи в файл логов
-     */
-    private void log(String mode, String msg, boolean writeToFile) {
-        String logMessage = String.format("[%s][%s] %s\n",
-                new Timestamp(System.currentTimeMillis()),
-                mode,
-                msg);
-        System.out.print(logMessage);
-        if (writeToFile) {
-            try {
-                logFile.write(logMessage);
-                // не забываем сливать данные из буффера
-                logFile.flush();
-            } catch (IOException e) {
-                log("ERROR", "Ошибка записи в файл логов");
-            }
         }
     }
 
@@ -335,7 +283,7 @@ public class Server {
      * @param message Объект поступившего сервисного сообщения
      * @throws IOException в случае ошибок отправки сообщения пользователю или закрытия его канала сокета
      */
-    private void proceedServiceMessage(SocketChannel socketChannel, Message message) throws IOException {
+    protected void proceedServiceMessage(SocketChannel socketChannel, Message message) throws IOException {
         // разбиваем сервисное сообщение на две части - метка сервисного сообщение (/exit, /newUser и т.д.) и содержимое
         // этого сервисного сообщения, которое несет полезную информацию
         String[] messageParts = (new String(message.getContent())).split("\\s");
@@ -394,7 +342,7 @@ public class Server {
      * @param userName Предыдущее имя пользователя
      * @throws IOException В случае ошибок отправки сообщения пользователю
      */
-    private void broadcastSuccessfulUserNameChange(SocketChannel socketChannel, String userName) throws IOException {
+    protected void broadcastSuccessfulUserNameChange(SocketChannel socketChannel, String userName) throws IOException {
         // заменяем имя в мэпе на новое
         this.userNames.put(socketChannel, userName);
         // если пользователь не мог отправлять массовые несервисные сообщения, то переводим его в режим возможности
@@ -418,7 +366,7 @@ public class Server {
      * @param message Сообщение, содержащее информацию о подключении нового пользователя
      * @throws IOException В случае ошибок отправки сообщения пользователям
      */
-    private void broadcastNewUserConnectedToChat(SocketChannel socketChannel, Message message) throws IOException {
+    protected void broadcastNewUserConnectedToChat(SocketChannel socketChannel, Message message) throws IOException {
         // добаляем пользователя в мэпы и даем ему возможность отправлять массовые несервисные сообщения
         this.userNames.put(socketChannel, message.getUsername());
         this.userCapable.put(socketChannel, Boolean.TRUE);
@@ -445,7 +393,7 @@ public class Server {
      * @param userName Проверяемое имя пользователя
      * @return true - если имя занято, иначе - false
      */
-    private boolean isUserNameCorrect(String userName) {
+    protected boolean isUserNameCorrect(String userName) {
         return !userNames.containsValue(userName);
     }
 
@@ -454,8 +402,59 @@ public class Server {
      * @param socketChannel Канал сокета пользователя, которого надо найти на сервере
      * @return Имя пользователя
      */
-    private String getUserNameBySocketChannel(SocketChannel socketChannel) {
+    protected String getUserNameBySocketChannel(SocketChannel socketChannel) {
         return userNames.get(socketChannel);
     }
 
+    /**
+     * Чтение конфигурационного файла
+     * @param fileName Имя конфигурационного файла
+     */
+    private void readConfigurationFile(String fileName) {
+        try (BufferedReader br = new BufferedReader(
+                new FileReader(
+                        new File(getClass().getResource("/" + fileName).toURI())
+                )
+        )) {
+            host = br.readLine().strip().split("=")[1];
+            port = Integer.parseInt(br.readLine().strip().split("=")[1]);
+            bufferSize = Integer.parseInt(br.readLine().strip().split("=")[1]);
+        } catch (FileNotFoundException e) {
+            log("ERROR", "Конфигурационный файл сервера\"" + fileName + "\" не найден", true);
+        } catch (IOException | URISyntaxException e) {
+            log("ERROR", "Ошибка чтения конфигурационного файла \"" + fileName + "\"", true);
+        }
+    }
+
+    /**
+     * Запись лога в консоль
+     * @param mode Вид логируемого сообщения
+     * @param msg Логируемое собощение
+     */
+    private void log(String mode, String msg) {
+        log(mode, msg, false);
+    }
+
+    /**
+     * Запись лога в консоль с возможность дополнительной записи в файл логов
+     * @param mode Вид логируемого сообщения
+     * @param msg Логируемое собощение
+     * @param writeToFile Надо ли записывать логи в файл логов
+     */
+    private void log(String mode, String msg, boolean writeToFile) {
+        String logMessage = String.format("[%s][%s] %s\n",
+                new Timestamp(System.currentTimeMillis()),
+                mode,
+                msg);
+        System.out.print(logMessage);
+        if (writeToFile) {
+            try {
+                logFile.write(logMessage);
+                // не забываем сливать данные из буффера
+                logFile.flush();
+            } catch (IOException e) {
+                log("ERROR", "Ошибка записи в файл логов");
+            }
+        }
+    }
 }

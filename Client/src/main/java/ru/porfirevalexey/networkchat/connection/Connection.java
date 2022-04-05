@@ -40,14 +40,14 @@ public class Connection {
 
     /**
      * Создание нового подключения к серверу
-     * @param connectionListener Объект слушателя подкюлчения
+     * @param connectionListener Объект слушателя подключения
      * @throws IOException В случае ошибки по созданию/открытию файла логов
      */
     public Connection(ConnectionListener connectionListener) throws IOException {
         this.connectionListener = connectionListener;
         logFile = new BufferedWriter(
                 new FileWriter(getClass()
-                        .getResource("/").getPath() + LOG_FILE
+                        .getResource("/").getPath() + LOG_FILE, true
                 )
         );
         users = new TreeSet<>();
@@ -57,7 +57,7 @@ public class Connection {
     /**
      * Получение нового сообщения от сервера
      */
-    public void receiveMessageFromServer() {
+    private void receiveMessageFromServer() {
         final ByteBuffer buffer = ByteBuffer.allocate(bufferSize);
         int bytesCount = 0;
         // слушаем, пока не прервут
@@ -186,13 +186,14 @@ public class Connection {
      */
     public void sendMessageToServer(Message message) {
         try {
-            // упаковываем сообщение
-            MessageManager.packMessageToByteArray(message);
-            final ByteBuffer buffer = ByteBuffer.allocate(bufferSize);
-            buffer.put(MessageManager.packMessageToByteArray(message));
-            buffer.flip();
-            socketChannel.write(buffer);
-
+            // упаковываем сообщение, если это текстовое сообщение или корректное сервисное сообщение
+            if(message.getMessageMode().equals(MessageMode.STANDARD) || isCorrectServiceMessage(message)) {
+                MessageManager.packMessageToByteArray(message);
+                final ByteBuffer buffer = ByteBuffer.allocate(bufferSize);
+                buffer.put(MessageManager.packMessageToByteArray(message));
+                buffer.flip();
+                socketChannel.write(buffer);
+            }
             // если сообщение сервисное, то делаем дополнительные действия с текущим подключением
             if (message.getMessageMode() == MessageMode.SERVICE) {
                 String[] contentParts = (new String(message.getContent())).split("\\s+");
@@ -213,6 +214,9 @@ public class Connection {
                     case "/changeName":
                         log("INFO", "Попытка изменения логина пользователя: " + this.userName + "->" + contentParts[1], true);
                         break;
+                    default:
+                        log("ERROR", "Введена недопустимая сервисная команда", true);
+                        connectionListener.newMessageReceived(new TextMessage(userName, "Введена недопустимая сервисная команда"));
                 }
             }
         } catch (IOException e) {
@@ -233,7 +237,11 @@ public class Connection {
         log("INFO", "Соединение с сервером установлено", true);
         // отправляем сообщение о новом пользователе
         Message message = new TextMessage(userName, ("/newUser").getBytes(), MessageMode.SERVICE);
-        sendMessageToServer(message);
+        MessageManager.packMessageToByteArray(message);
+        final ByteBuffer buffer = ByteBuffer.allocate(bufferSize);
+        buffer.put(MessageManager.packMessageToByteArray(message));
+        buffer.flip();
+        socketChannel.write(buffer);
         isConnected = true;
         Thread threadReceiver = new Thread(null, this::receiveMessageFromServer, "receiveMessages");
         threadReceiver.start();
@@ -265,7 +273,7 @@ public class Connection {
             hostName = br.readLine().strip().split("=")[1];
             hostPort = Integer.parseInt(br.readLine().strip().split("=")[1]);
             bufferSize = Integer.parseInt(br.readLine().strip().split("=")[1]);
-            userName = br.readLine().strip().split("=")[1] + (new Random()).nextInt(2);
+            userName = br.readLine().strip().split("=")[1];
         } catch (FileNotFoundException e) {
             log("ERROR", "Конфигурационный файл сервера\"" + fileName + "\" не найден", true);
         } catch (IOException e) {
@@ -334,6 +342,20 @@ public class Connection {
      */
     public boolean isConnected() {
         return isConnected;
+    }
+
+    /**
+     * Проверка является ли сообщение корректным сервисным сообщением. Пользователю разрешено вводить только две
+     * сервисные команды - выход /exit и смена имени пользователя /changeName
+     * @param message
+     * @return
+     */
+    private boolean isCorrectServiceMessage(Message message) {
+        String msg = new String(message.getContent());
+        if (msg.startsWith("/exit") || msg.startsWith("/changeName")) {
+            return true;
+        }
+        return false;
     }
 
 }

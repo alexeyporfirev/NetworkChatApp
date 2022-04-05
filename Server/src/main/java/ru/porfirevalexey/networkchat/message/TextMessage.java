@@ -1,6 +1,8 @@
 package ru.porfirevalexey.networkchat.message;
 
 import java.io.Serializable;
+import java.util.Arrays;
+import java.util.Objects;
 
 /**
  * Класс текстовых сообщений
@@ -97,5 +99,20 @@ public class TextMessage implements Message, Serializable {
      */
     public String toString() {
         return this.username + ": " + new String(content);
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        TextMessage that = (TextMessage) o;
+        return Objects.equals(username, that.username) && messageType == that.messageType && messageMode == that.messageMode && Arrays.equals(content, that.content);
+    }
+
+    @Override
+    public int hashCode() {
+        int result = Objects.hash(username, messageType, messageMode);
+        result = 31 * result + Arrays.hashCode(content);
+        return result;
     }
 }
