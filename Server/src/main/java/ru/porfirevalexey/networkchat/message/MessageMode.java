@@ -1,5 +1,15 @@
 package ru.porfirevalexey.networkchat.message;
 
+/**
+ * Виды сообщений, которые могут быть использованы при создании сообщений
+ */
 public enum MessageMode {
-    STANDARD, SERVICE;
+    /**
+     * Стандартное сообщение
+     */
+    STANDARD,
+    /**
+     *  Сервисное сообщение
+     */
+    SERVICE;
 }
